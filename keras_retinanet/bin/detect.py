@@ -4,10 +4,12 @@ from glob import glob
 import progressbar
 import imageio
 import argparse
+import logging
 
 import os, sys, os.path as op
 sys.path.append(op.join(os.getenv('SHUFFLER_DIR'), 'interface'))
-from interfaceKeras import BareImageGenerator
+from interfaceKeras import BareImageGenerator  # To grab images.
+from shufflerDataset import DatasetWriter  # To write detected bboxes into a database.
 
 # Allow relative imports when being executed as script.
 if __name__ == "__main__" and __package__ is None:
@@ -28,11 +30,13 @@ import os
 import numpy as np
 import time
 
-progressbar.streams.wrap_stdout()
-
 parser = argparse.ArgumentParser(description='Detect boxes in images from Shuffler database')
 parser.add_argument('-i', '--in_db_file',
+        help='Path to Shuffler database that contains paths to test images.',
         default='../stamps-1800x1200-empty-1class.db')
+parser.add_argument('-o', '--out_db_file',
+        help='The path to a new Shuffler database, where detections will be stored.',
+        default='examples/detected/epoch10-test.db')
 parser.add_argument('--rootdir',
         help='Where image files in the db are relative to.',
         default='..')
@@ -42,7 +46,14 @@ parser.add_argument('--out_dir',
 parser.add_argument('--model_path',
         help='The path of the trained model .h5 file.',
         default='snapshots/from-coco-weights/resnet50_coco_10.h5')
+parser.add_argument('--logging', default=20, type=int, choices={10, 20, 30, 40},
+        help='Log debug (10), info (20), warning (30), error (40).')
 args = parser.parse_args()
+
+progressbar.streams.wrap_stderr()
+progressbar.streams.wrap_stdout()
+FORMAT = '[%(filename)s:%(lineno)s - %(funcName)s() %(levelname)s]: %(message)s'
+logging.basicConfig(level=args.logging, format=FORMAT)
 
 
 # Get data generator.
@@ -51,6 +62,12 @@ generator = BareImageGenerator(
         rootdir=args.rootdir,
         batch_size=32,
         shuffle=False)
+
+
+# Get shuffler dataset writer
+datasetWriter = DatasetWriter(out_db_file=args.out_db_file,
+        rootdir=args.rootdir,
+        overwrite=True)
 
 
 # set tf backend to allow memory to grow, instead of claiming everything
@@ -71,9 +88,9 @@ print ('Loading model...')
 model = models.load_model(args.model_path, backbone_name='resnet50')
 model = models.convert_model(model)
 
-#labels_to_names = {0: 'stamp'}
+labels_to_names = {0: 'stamp'}
 
-writer = imageio.get_writer(args.out_dir + '.mp4', fps=1, codec='mjpeg')
+videowriter = imageio.get_writer(args.out_dir + '.mp4', fps=1, codec='mjpeg')
 
 for batch in progressbar.progressbar(generator):
   images = batch['image']
@@ -96,7 +113,6 @@ for batch in progressbar.progressbar(generator):
     draws.append(draw)
     scales.append(scale)
 
-
   images = np.stack(images)
   #print (images.shape)
 
@@ -111,16 +127,16 @@ for batch in progressbar.progressbar(generator):
   print ('Postprocessing batch.. ', end='')
   for image, imagefile, draw, scale, boxes, scores, labels in zip(images, imagefiles, draws, scales, boxess, scoress, labelss):
 
+    datasetWriter.addImage({'imagefile': imagefile})
+    
     # correct for image scale
     boxes /= scale
-#    print (boxes)
-#    print (scores.max())
 
     # visualize detections
     for box, score in zip(boxes, scores):
         label = 0
         # scores are sorted so we can break
-        if score < 0.5:
+        if score < 0.1:
             break
             
         color = label_color(label)
@@ -131,12 +147,18 @@ for batch in progressbar.progressbar(generator):
         caption = "%.3f" % score
         #caption = "{} {:.3f}".format(labels_to_names[label], score)
         draw_caption(draw, b, caption)
+
+        datasetWriter.addObject({'imagefile': imagefile, 
+            'x1': int(b[0]), 'y1': int(b[1]), 'width': int(box[2]-box[0]), 'height': int(box[3]-box[1]),
+            'name': labels_to_names[label],
+            'score': float(score)})
         
     out_image_path = os.path.join(args.out_dir, os.path.basename(imagefile))
     imageio.imwrite(out_image_path, draw)
-    writer.append_data(draw)
+    videowriter.append_data(draw)
 
   print("\tin %.2f sec." % (time.time() - start))
 
-writer.close()
+videowriter.close()
+datasetWriter.close()
 
