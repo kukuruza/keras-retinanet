@@ -19,6 +19,8 @@ from pycocotools.cocoeval import COCOeval
 import keras
 import numpy as np
 import json
+import tempfile
+import shutil
 
 import progressbar
 assert(callable(progressbar.progressbar)), "Using wrong progressbar module, install 'progressbar2' instead."
@@ -77,8 +79,11 @@ def evaluate_coco(generator, model, threshold=0.05):
         return
 
     # write output
-    json.dump(results, open('{}_bbox_results.json'.format(generator.set_name), 'w'), indent=4)
-    json.dump(image_ids, open('{}_processed_image_ids.json'.format(generator.set_name), 'w'), indent=4)
+    dirpath = tempfile.mkdtemp()
+    bbox_path = os.path.join(dirpath, '{}_bbox_results.json'.format(generator.set_name))
+    image_ids_path = os.path.join(dirpath, '{}_processed_image_ids.json'.format(generator.set_name))
+    json.dump(results, open(bbox_path, 'w'), indent=4)
+    json.dump(image_ids, open(image_ids_path, 'w'), indent=4)
 
     # load results in COCO evaluation tool
     coco_true = generator.coco
@@ -90,4 +95,6 @@ def evaluate_coco(generator, model, threshold=0.05):
     coco_eval.evaluate()
     coco_eval.accumulate()
     coco_eval.summarize()
+
+    shutil.rmtree(dirpath)
     return coco_eval.stats
