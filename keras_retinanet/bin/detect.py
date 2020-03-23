@@ -5,6 +5,7 @@ import progressbar
 import imageio
 import argparse
 import logging
+from ast import literal_eval
 
 import os, sys, os.path as op
 sys.path.append(op.join(os.getenv('SHUFFLER_DIR'), 'interface'))
@@ -40,6 +41,8 @@ parser.add_argument('-o', '--out_db_file',
 parser.add_argument('--rootdir',
         help='Where image files in the db are relative to.',
         default='..')
+parser.add_argument('--coco_category_id_to_name_map', default='{0: "stamp"}',
+        help='A map (as a json string) from category id to its name.')
 parser.add_argument('--out_dir',
         help='The path of the output directory. ',
         default='examples/detected/epoch10-test')
@@ -88,7 +91,7 @@ print ('Loading model...')
 model = models.load_model(args.model_path, backbone_name='resnet50')
 model = models.convert_model(model)
 
-labels_to_names = {0: 'stamp'}
+labels_to_names = literal_eval(args.coco_category_id_to_name_map)
 
 videowriter = imageio.get_writer(args.out_dir + '.mp4', fps=1, codec='mjpeg')
 
