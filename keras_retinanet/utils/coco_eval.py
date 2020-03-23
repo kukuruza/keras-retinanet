@@ -87,7 +87,7 @@ def evaluate_coco(generator, model, threshold=0.05):
 
     # load results in COCO evaluation tool
     coco_true = generator.coco
-    coco_pred = coco_true.loadRes('{}_bbox_results.json'.format(generator.set_name))
+    coco_pred = coco_true.loadRes(bbox_path)
 
     # run COCO evaluation
     coco_eval = COCOeval(coco_true, coco_pred, 'bbox')
