@@ -16,6 +16,7 @@ limitations under the License.
 
 from pycocotools.cocoeval import COCOeval
 
+import os
 import keras
 import numpy as np
 import json
