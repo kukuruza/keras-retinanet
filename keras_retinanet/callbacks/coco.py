@@ -21,7 +21,7 @@ from ..utils.coco_eval import evaluate_coco
 class CocoEval(keras.callbacks.Callback):
     """ Performs COCO evaluation on each epoch.
     """
-    def __init__(self, generator, tensorboard=None, threshold=0.05):
+    def __init__(self, generator, tensorboard=None, threshold=0.05, summary_file=None):
         """ CocoEval callback intializer.
 
         Args
@@ -32,6 +32,7 @@ class CocoEval(keras.callbacks.Callback):
         self.generator = generator
         self.threshold = threshold
         self.tensorboard = tensorboard
+        self.summary_file = summary_file
 
         super(CocoEval, self).__init__()
 
@@ -52,10 +53,17 @@ class CocoEval(keras.callbacks.Callback):
                     'AR @[ IoU=0.50:0.95 | area= large | maxDets=100 ]']
         coco_eval_stats = evaluate_coco(self.generator, self.model, self.threshold)
 
+        assert coco_eval_stats is not None, \
+                "Coco_eval_stats is None, can't print evaluation results."
         if coco_eval_stats is not None:
             for index, result in enumerate(coco_eval_stats):
                 logs[coco_tag[index]] = result
 
+            if self.summary_file is not None:
+                f = open(self.summary_file, 'a')
+                f.write("epoch: %d" % epoch)
+
+            assert self.tensorboard, "self.tensorboard is not specified."
             if self.tensorboard:
                 import tensorflow as tf
                 if tf.version.VERSION < '2.0.0' and self.tensorboard.writer:
@@ -65,3 +73,9 @@ class CocoEval(keras.callbacks.Callback):
                         summary_value.simple_value = result
                         summary_value.tag = '{}. {}'.format(index + 1, coco_tag[index])
                         self.tensorboard.writer.add_summary(summary, epoch)
+                        if self.summary_file is not None:
+                            f.write("%s: %s" % (coco_tag[index], result))
+                    self.tensorboard.writer.flush()
+
+            if self.summary_file is not None:
+                f.close()

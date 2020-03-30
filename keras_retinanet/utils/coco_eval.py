@@ -85,6 +85,7 @@ def evaluate_coco(generator, model, threshold=0.05):
     image_ids_path = os.path.join(dirpath, '{}_processed_image_ids.json'.format(generator.set_name))
     json.dump(results, open(bbox_path, 'w'), indent=4)
     json.dump(image_ids, open(image_ids_path, 'w'), indent=4)
+    print ('Dumping bboxes to "%s" and image_ids to "%s".' % (bbox_path, image_ids_path))
 
     # load results in COCO evaluation tool
     coco_true = generator.coco

@@ -163,9 +163,13 @@ def create_callbacks(model, training_model, prediction_model, validation_generat
     if args.evaluation and validation_generator:
         if args.dataset_type == 'coco':
             from ..callbacks.coco import CocoEval
+            summary_file = os.path.join(args.tensorboard_dir, "eval_results.txt")
+            print ("Will write eval results also to '%s'." % summary_file)
+            with open(summary_file, "w") as f:
+                f.write("Evaluation here")
 
             # use prediction model for evaluation
-            evaluation = CocoEval(validation_generator, tensorboard=tensorboard_callback)
+            evaluation = CocoEval(validation_generator, tensorboard=tensorboard_callback, summary_file=summary_file)
         else:
             evaluation = Evaluate(validation_generator, tensorboard=tensorboard_callback, weighted_average=args.weighted_average)
         evaluation = RedirectModel(evaluation, prediction_model)
