@@ -15,7 +15,7 @@ limitations under the License.
 """
 
 from ..preprocessing.generator import Generator
-from ..utils.image import read_image_bgr
+from ..utils.image import read_image_bgr, read_image_gray
 
 import os
 import numpy as np
@@ -129,6 +129,18 @@ class CocoGenerator(Generator):
         """
         path  = self.image_path(image_index)
         return read_image_bgr(path)
+
+    def load_mask(self, image_index):
+        """ Load a mask (if exists) at the image_index.
+        The mask should be have the name <image_name>.png
+        The white areas are okay, the black areas are ignored.
+        """
+        image_path  = self.image_path(image_index)
+        mask_path   = '%s.png' % os.path.splitext(image_path)[0]
+        if os.path.exists(mask_path):
+            return read_image_gray(mask_path)
+        else:
+            return None
 
     def load_annotations(self, image_index):
         """ Load annotations for an image_index.

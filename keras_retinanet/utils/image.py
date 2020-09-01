@@ -33,6 +33,17 @@ def read_image_bgr(path):
     return image[:, :, ::-1].copy()
 
 
+def read_image_gray(path):
+    """ Read an image in the grayscale format.
+
+    Args
+        path: Path to the image.
+    """
+    # We deliberately don't use cv2.imread here, since it gives no feedback on errors while reading the image.
+    image = np.asarray(Image.open(path).convert('L'))
+    return image
+
+
 def preprocess_image(x, mode='caffe'):
     """ Preprocess an image by subtracting the ImageNet mean.
 
@@ -59,6 +70,12 @@ def preprocess_image(x, mode='caffe'):
         x -= [103.939, 116.779, 123.68]
 
     return x
+
+
+def preprocess_mask(x):
+    """ Convert grayscale to black-and-white, where black is 0, and white is 1.
+    """
+    return (x > 128).astype(np.float32)
 
 
 def adjust_transform_for_image(transform, image, relative_translation):

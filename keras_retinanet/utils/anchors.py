@@ -54,6 +54,7 @@ def anchor_targets_bbox(
     anchors,
     image_group,
     annotations_group,
+    mask_group,
     num_classes,
     negative_overlap=0.4,
     positive_overlap=0.5
@@ -78,6 +79,7 @@ def anchor_targets_bbox(
     """
 
     assert(len(image_group) == len(annotations_group)), "The length of the images and annotations need to be equal."
+    assert(len(image_group) == len(mask_group)), "The length of the images and masks need to be equal."
     assert(len(annotations_group) > 0), "No data received to compute anchor targets for."
     for annotations in annotations_group:
         assert('bboxes' in annotations), "Annotations should contain bboxes."
@@ -89,10 +91,11 @@ def anchor_targets_bbox(
     labels_batch      = np.zeros((batch_size, anchors.shape[0], num_classes + 1), dtype=keras.backend.floatx())
 
     # compute labels and regression targets
-    for index, (image, annotations) in enumerate(zip(image_group, annotations_group)):
+    for index, (image, annotations, mask) in enumerate(zip(image_group, annotations_group, mask_group)):
         if annotations['bboxes'].shape[0]:
             # obtain indices of gt annotations with the greatest overlap
-            positive_indices, ignore_indices, argmax_overlaps_inds = compute_gt_annotations(anchors, annotations['bboxes'], negative_overlap, positive_overlap)
+            positive_indices, ignore_indices, argmax_overlaps_inds = compute_gt_annotations(
+                    anchors, annotations['bboxes'], mask, negative_overlap, positive_overlap)
 
             labels_batch[index, ignore_indices, -1]       = -1
             labels_batch[index, positive_indices, -1]     = 1
@@ -119,6 +122,7 @@ def anchor_targets_bbox(
 def compute_gt_annotations(
     anchors,
     annotations,
+    mask,
     negative_overlap=0.4,
     positive_overlap=0.5
 ):
@@ -127,6 +131,7 @@ def compute_gt_annotations(
     Args
         anchors: np.array of annotations of shape (N, 4) for (x1, y1, x2, y2).
         annotations: np.array of shape (N, 5) for (x1, y1, x2, y2, label).
+        mask: a float np.array of shape (YxX), where YxX match the image. Value 1. means ignore all anchors inside.
         negative_overlap: IoU overlap for negative anchors (all anchors with overlap < negative_overlap are negative).
         positive_overlap: IoU overlap or positive anchors (all anchors with overlap > positive_overlap are positive).
 
@@ -135,17 +140,56 @@ def compute_gt_annotations(
         ignore_indices: indices of ignored anchors
         argmax_overlaps_inds: ordered overlaps indices
     """
-
     overlaps = compute_overlap(anchors.astype(np.float64), annotations.astype(np.float64))
     argmax_overlaps_inds = np.argmax(overlaps, axis=1)
     max_overlaps = overlaps[np.arange(overlaps.shape[0]), argmax_overlaps_inds]
+    is_masked = get_masked_anchors(anchors, mask)
 
     # assign "dont care" labels
-    positive_indices = max_overlaps >= positive_overlap
-    ignore_indices = (max_overlaps > negative_overlap) & ~positive_indices
+    positive_indices = (max_overlaps >= positive_overlap) & ~is_masked
+    ignore_indices = (max_overlaps > negative_overlap) & ~positive_indices | is_masked
+#    print ('total: %d, positive_indices:      %d, ignore_indices:      %d' %
+#           (positive_indices.size, np.count_nonzero(positive_indices),
+#            np.count_nonzero(ignore_indices)))
+
+    # Debuggin info
+    positive_indices_orig = (max_overlaps >= positive_overlap)
+    ignore_indices_orig = (max_overlaps > negative_overlap) & ~positive_indices
+#    print ('total: %d, positive_indices_orig: %d, ignore_indices_orig: %d' %
+#           (positive_indices_orig.size, np.count_nonzero(positive_indices_orig),
+#            np.count_nonzero(ignore_indices_orig)))
 
     return positive_indices, ignore_indices, argmax_overlaps_inds
 
+
+def get_masked_anchors(anchors, mask):
+    '''
+    Args
+        anchors: np.array of annotations of shape (N, 4) for (x1, y1, x2, y2).
+        mask: a float np.array of shape (YxX), where YxX match the image. Value 1. means ignore all anchors inside.
+    Returns
+        is_masked: a bool np.array of shape (len(anchors)), where "true" means ignore that anchor.
+    '''
+    assert isinstance(anchors, np.ndarray)
+
+    if mask is None:
+        return np.zeros(shape=(len(anchors),), dtype=bool)
+    else:
+        # centers is np array of shape (N, 2), where centers[any_index] = (x, y).
+        centers = (anchors[:,:2] + anchors[:,2:]) / 2.
+        #centers = np.vstack([(anchors[:, 0] + anchors[:, 2]) / 2, (anchors[:, 1] + anchors[:, 3]) / 2]).T
+        #print (centers.shape, anchors.shape)
+        # Some checks.
+        height, width = mask.shape
+        is_inside = [center[0] >= 0 and center[1] >= 0 and 
+                     center[0] < width and center[1] < height
+                     for center in centers.astype(int)]
+        # Only check inside.
+        is_masked = [is_inside[i] and mask[center[1], center[0]] == 1.
+                     for i, center in enumerate(centers.astype(int))]
+        is_masked = np.array(is_masked)
+#        print ('is_masked: %.2f.' % (np.count_nonzero(is_masked) / float(is_masked.size)))
+        return is_masked
 
 def layer_shapes(image_shape, model):
     """Compute layer shapes given input image shape and the model.

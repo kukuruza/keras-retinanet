@@ -17,6 +17,7 @@ limitations under the License.
 import numpy as np
 import random
 import warnings
+import cv2
 
 import keras
 
@@ -31,6 +32,7 @@ from ..utils.image import (
     adjust_transform_for_image,
     apply_transform,
     preprocess_image,
+    preprocess_mask,
     resize_image,
 )
 from ..utils.transform import transform_aabb
@@ -189,6 +191,11 @@ class Generator(keras.utils.Sequence):
         """
         return [self.load_image(image_index) for image_index in group]
 
+    def load_mask_group(self, group):
+        """ Load masks for all images in a group.
+        """
+        return [self.load_mask(image_index) for image_index in group]
+
     def random_visual_effect_group_entry(self, image, annotations):
         """ Randomly transforms image and annotation.
         """
@@ -214,7 +221,7 @@ class Generator(keras.utils.Sequence):
 
         return image_group, annotations_group
 
-    def random_transform_group_entry(self, image, annotations, transform=None):
+    def random_transform_group_entry(self, image, annotations, mask, transform=None):
         """ Randomly transforms image and annotation.
         """
         # randomly transform both image and annotations
@@ -224,25 +231,29 @@ class Generator(keras.utils.Sequence):
 
             # apply transformation to image
             image = apply_transform(transform, image, self.transform_parameters)
+            if mask is not None:
+                mask = apply_transform(transform, mask, self.transform_parameters)
 
             # Transform the bounding boxes in the annotations.
             annotations['bboxes'] = annotations['bboxes'].copy()
             for index in range(annotations['bboxes'].shape[0]):
                 annotations['bboxes'][index, :] = transform_aabb(transform, annotations['bboxes'][index, :])
 
-        return image, annotations
+        return image, annotations, mask
 
-    def random_transform_group(self, image_group, annotations_group):
+    def random_transform_group(self, image_group, annotations_group, mask_group):
         """ Randomly transforms each image and its annotations.
         """
 
         assert(len(image_group) == len(annotations_group))
+        assert(len(image_group) == len(mask_group))
 
         for index in range(len(image_group)):
             # transform a single group entry
-            image_group[index], annotations_group[index] = self.random_transform_group_entry(image_group[index], annotations_group[index])
+            image_group[index], annotations_group[index], mask_group[index] = self.random_transform_group_entry(
+                    image_group[index], annotations_group[index], mask_group[index])
 
-        return image_group, annotations_group
+        return image_group, annotations_group, mask_group
 
     def resize_image(self, image):
         """ Resize an image using image_min_side and image_max_side.
@@ -252,33 +263,44 @@ class Generator(keras.utils.Sequence):
         else:
             return resize_image(image, min_side=self.image_min_side, max_side=self.image_max_side)
 
-    def preprocess_group_entry(self, image, annotations):
+    def preprocess_group_entry(self, image, annotations, mask):
         """ Preprocess image and its annotations.
         """
         # preprocess the image
         image = self.preprocess_image(image)
+        if mask is not None:
+            mask = preprocess_mask(mask)
 
         # resize image
+        if mask is not None:
+            assert len(mask.shape) == 2, "Mask shape is %s, which is not grayscale" % str(mask.shape)
+            if image.shape[:2] != mask.shape:
+                raise ValueError("Image shape %s and mask shape %s mismatch." % (image.shape, mask.shape))
         image, image_scale = self.resize_image(image)
+        if mask is not None:
+            mask = cv2.resize(mask, None, fx=image_scale, fy=image_scale, interpolation=cv2.INTER_NEAREST)
 
         # apply resizing to annotations too
         annotations['bboxes'] *= image_scale
 
         # convert to the wanted keras floatx
         image = keras.backend.cast_to_floatx(image)
+        if mask is not None:
+            mask = keras.backend.cast_to_floatx(mask)
 
-        return image, annotations
+        return image, annotations, mask
 
-    def preprocess_group(self, image_group, annotations_group):
+    def preprocess_group(self, image_group, annotations_group, mask_group):
         """ Preprocess each image and its annotations in its group.
         """
         assert(len(image_group) == len(annotations_group))
+        assert(len(image_group) == len(mask_group))
 
         for index in range(len(image_group)):
             # preprocess a single group entry
-            image_group[index], annotations_group[index] = self.preprocess_group_entry(image_group[index], annotations_group[index])
+            image_group[index], annotations_group[index], mask_group[index] = self.preprocess_group_entry(image_group[index], annotations_group[index], mask_group[index])
 
-        return image_group, annotations_group
+        return image_group, annotations_group, mask_group
 
     def group_images(self):
         """ Order the images according to self.order and makes groups of self.batch_size.
@@ -317,7 +339,7 @@ class Generator(keras.utils.Sequence):
             anchor_params = parse_anchor_parameters(self.config)
         return anchors_for_shape(image_shape, anchor_params=anchor_params, shapes_callback=self.compute_shapes)
 
-    def compute_targets(self, image_group, annotations_group):
+    def compute_targets(self, image_group, annotations_group, mask_group):
         """ Compute target outputs for the network using images and their annotations.
         """
         # get the max image shape
@@ -328,6 +350,7 @@ class Generator(keras.utils.Sequence):
             anchors,
             image_group,
             annotations_group,
+            mask_group,
             self.num_classes()
         )
 
@@ -339,6 +362,7 @@ class Generator(keras.utils.Sequence):
         # load images and annotations
         image_group       = self.load_image_group(group)
         annotations_group = self.load_annotations_group(group)
+        mask_group        = self.load_mask_group(group)
 
         # check validity of annotations
         image_group, annotations_group = self.filter_annotations(image_group, annotations_group, group)
@@ -347,16 +371,16 @@ class Generator(keras.utils.Sequence):
         image_group, annotations_group = self.random_visual_effect_group(image_group, annotations_group)
 
         # randomly transform data
-        image_group, annotations_group = self.random_transform_group(image_group, annotations_group)
+        image_group, annotations_group, mask_group = self.random_transform_group(image_group, annotations_group, mask_group)
 
         # perform preprocessing steps
-        image_group, annotations_group = self.preprocess_group(image_group, annotations_group)
+        image_group, annotations_group, mask_group = self.preprocess_group(image_group, annotations_group, mask_group)
 
         # compute network inputs
         inputs = self.compute_inputs(image_group)
 
         # compute network targets
-        targets = self.compute_targets(image_group, annotations_group)
+        targets = self.compute_targets(image_group, annotations_group, mask_group)
 
         return inputs, targets
 
